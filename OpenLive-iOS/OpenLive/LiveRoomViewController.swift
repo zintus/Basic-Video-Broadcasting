@@ -8,6 +8,7 @@
 
 import UIKit
 import AgoraRtcKit
+import CallKit
 
 protocol LiveVCDataSource: NSObjectProtocol {
     func liveVCNeedAgoraKit() -> AgoraRtcEngineKit
@@ -84,11 +85,31 @@ class LiveRoomViewController: UIViewController {
     private let maxVideoSession = 4
     
     weak var dataSource: LiveVCDataSource?
-    
+
+
+    let config: CXProviderConfiguration = {
+        let configuration = CXProviderConfiguration(localizedName: "Name")
+        configuration.maximumCallGroups = 1
+        configuration.maximumCallsPerCallGroup = 1
+        configuration.supportsVideo = true
+        configuration.supportedHandleTypes = [.generic]
+        return configuration
+    }()
+    lazy var callKitProvider = CXProvider(configuration: config)
+    let callKitCallController = CXCallController()
+
+    let call = UUID()
     override func viewDidLoad() {
         super.viewDidLoad()
         updateButtonsVisiablity()
-        loadAgoraKit()
+
+        callKitProvider.setDelegate(self, queue: .main)
+
+        let startCall = CXStartCallAction(call: call, handle: CXHandle(type: .generic, value: "Hi"))
+        let transaction = CXTransaction(action: startCall)
+        callKitCallController.request(transaction) { (error) in
+            print("failed to start? \(error)")
+        }
     }
     
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -114,6 +135,16 @@ class LiveRoomViewController: UIViewController {
     
     @IBAction func doLeavePressed(_ sender: UIButton) {
         leaveChannel()
+    }
+}
+
+extension LiveRoomViewController: CXProviderDelegate {
+    public func providerDidReset(_ provider: CXProvider) {
+        print("reset")
+    }
+
+    public func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        loadAgoraKit()
     }
 }
 
@@ -236,7 +267,10 @@ private extension LiveRoomViewController {
         // Step 5, join channel and start group chat
         // If join  channel success, agoraKit triggers it's delegate function
         // 'rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int)'
-        agoraKit.joinChannel(byToken: KeyCenter.Token, channelId: channelId, info: nil, uid: 0, joinSuccess: nil)
+        callKitProvider.reportOutgoingCall(with: call, startedConnectingAt: nil)
+        agoraKit.joinChannel(byToken: KeyCenter.Token, channelId: channelId, info: nil, uid: 0, joinSuccess: { (_, _, _) in
+            self.callKitProvider.reportOutgoingCall(with: self.call, connectedAt: Date())
+        })
         
         // Step 6, set speaker audio route
         agoraKit.setEnableSpeakerphone(true)
